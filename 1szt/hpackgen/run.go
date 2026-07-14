@@ -89,7 +89,15 @@ func Run() {
 			"  1.0.0                → 固定版本（不含 {} 则不替换）"},
 		{"MANIFEST_DESCRIPTION", "# 欢迎来到 1szt 服务器\\n\\n感谢你选择加入我们的世界。  \\n交流与反馈请前往 QQ 群：565941634\\n", "整合包描述（使用 \\n 换行）"},
 		{"MANIFEST_FILE_API", "https://mc.1szt.com", "文件 API 地址"},
-		{"MANIFEST_ADDONS", `[{"id":"game","version":"1.21.1"},{"id":"neoforge","version":"21.1.236"}]`, "附加组件（JSON 数组，用于 addons 字段）"},
+		{"MANIFEST_ADDONS", `[{"id":"game","version":"1.21.1"},{"id":"neoforge","version":"21.1.236"}]`,
+			"附加组件（JSON 数组）",
+			"",
+			"控制游戏引擎和模组加载器的版本号：",
+			"  id      - 组件标识（game=游戏本体, neoforge=加载器）",
+			"  version - 对应版本号",
+			"",
+			"示例：",
+			"  [{\"id\":\"game\",\"version\":\"1.21.1\"},{\"id\":\"neoforge\",\"version\":\"21.1.236\"}]"},
 	})
 
 	fmt.Println("[hpackgen] 环境配置已就绪")
