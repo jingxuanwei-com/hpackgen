@@ -190,15 +190,35 @@ jobs:
 
       - name: 生成容器镜像标签
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          flavor: |
-            suffix=-${{ matrix.variant }},onlatest=true
-          tags: |
-            type=raw,value=${{ steps.version.outputs.tag }}
-            type=raw,value=latest,enable=${{ github.ref_name == github.event.repository.default_branch || github.event_name == 'release' }}
-            type=sha,format=short
+        shell: bash
+        run: |
+          TAGS=""
+          SUFFIX="-${{ matrix.variant }}"
+          REG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # ── 自动构建 → test 标签 ──
+            TAGS="${REG}:test${SUFFIX}"
+          else
+            # ── 发布 / 手动 → 版本标签 + latest ──
+            TAGS="${REG}:${{ steps.version.outputs.tag }}${SUFFIX}"
+            TAGS="${TAGS},${REG}:latest${SUFFIX}"
+          fi
+
+          # SHA 标签（始终）
+          SHA="${{ github.sha }}"
+          TAGS="${TAGS},${REG}:${SHA:0:7}${SUFFIX}"
+
+          # Alpine 额外打 bare latest 标签（作为默认 latest）
+          if [ "${{ matrix.variant }}" = "alpine" ] && [ "${{ github.event_name }}" != "push" ]; then
+            TAGS="${TAGS},${REG}:latest"
+            TAGS="${TAGS},${REG}:${{ steps.version.outputs.tag }}"
+          fi
+
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: 打印镜像标签
+        run: echo "${{ steps.meta.outputs.tags }}"
 
       - name: 构建并推送容器镜像
         uses: docker/build-push-action@v6

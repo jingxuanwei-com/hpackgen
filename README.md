@@ -123,14 +123,21 @@ hpackgen/
 
 支持两种基础镜像，自动编译多架构（linux/amd64 + linux/arm64）：
 
+| 基础镜像 | 大小 | 拉取命令 |
+|---------|------|---------|
+| Alpine（**默认**） | ~15MB | `docker pull ghcr.io/你的用户名/hpackgen:latest` |
+| Debian slim | ~80MB | `docker pull ghcr.io/你的用户名/hpackgen:latest-debian` |
+
+**镜像标签规则：**
+
+| 触发方式 | Alpine 标签 | Debian 标签 |
+|---------|------------|-------------|
+| 推送代码 | `test` `test-alpine` `<sha>-alpine` | `test-debian` `<sha>-debian` |
+| 发布/手动 | `latest` `latest-alpine` `<tag>` `<tag>-alpine` | `latest-debian` `<tag>-debian` |
+
+本地构建：
+
 ```bash
-# Debian slim
-docker pull ghcr.io/你的用户名/hpackgen:latest-debian
-
-# Alpine（更小）
-docker pull ghcr.io/你的用户名/hpackgen:latest-alpine
-
-# 本地构建
 docker buildx build --target=debian --platform linux/amd64,linux/arm64 -t hpackgen:debian .
 docker buildx build --target=alpine --platform linux/amd64,linux/arm64 -t hpackgen:alpine .
 ```
