@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -69,7 +71,7 @@ func Run() {
 		{"DATA_DIR", "data", "数据目录（可改为 . 使用当前目录，或 /绝对路径）"},
 		{"MANIFEST_NAME", "1szt", "整合包名称"},
 		{"MANIFEST_AUTHOR", "1szt", "作者"},
-		{"MANIFEST_VERSION", "1szt", "版本号（整合包版本）"},
+		{"MANIFEST_VERSION", "{date}.{rand:3}", "版本号（整合包版本；支持模板：{date} {time} {datetime} {rand:N} {shortuuid}）"},
 		{"MANIFEST_DESCRIPTION", "# 欢迎来到 1szt 服务器\\n\\n感谢你选择加入我们的世界。  \\n交流与反馈请前往 QQ 群：565941634\\n", "整合包描述（使用 \\n 换行）"},
 		{"MANIFEST_FILE_API", "https://mc.1szt.com", "文件 API 地址"},
 		{"MANIFEST_ADDONS", `[{"id":"game","version":"1.21.1"},{"id":"neoforge","version":"21.1.236"}]`, "附加组件（JSON 数组，用于 addons 字段）"},
@@ -99,6 +101,57 @@ func Run() {
 	fmt.Printf("[hpackgen] 文件监听已启动，等待 %s 变动...\n", ovDir)
 }
 
+// resolveVersion 解析版本号模板，支持以下占位符：
+//
+//	{date}      → 当前日期 YYYYMMDD（如 20260714）
+//	{time}      → 当前时间 HHmmss（如 143052）
+//	{datetime}  → 当前日期时间 YYYYMMDDHHmmss（如 20260714143052）
+//	{rand:N}    → N 位随机数字（如 {rand:4} → 8371）
+//	{shortuuid} → 8 位随机十六进制字符串（如 a3f1c9e2）
+//
+// 如果模板中不含任何占位符，则直接返回原值（保持向后兼容）。
+func resolveVersion(template string) string {
+	if !strings.Contains(template, "{") {
+		return template
+	}
+
+	now := time.Now()
+
+	template = strings.ReplaceAll(template, "{date}", now.Format("20060102"))
+	template = strings.ReplaceAll(template, "{time}", now.Format("150405"))
+	template = strings.ReplaceAll(template, "{datetime}", now.Format("20060102150405"))
+
+	// {rand:N} — 手动解析避免引入 regexp
+	for {
+		start := strings.Index(template, "{rand:")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(template[start:], "}")
+		if end == -1 {
+			break
+		}
+		nStr := template[start+6 : start+end]
+		n, err := strconv.Atoi(nStr)
+		if err != nil || n <= 0 {
+			break
+		}
+		// 计算 n 位数的最小值和最大值
+		min := 1
+		for i := 1; i < n; i++ {
+			min *= 10
+		}
+		max := min*10 - 1
+		r := rand.Intn(max-min+1) + min
+		template = template[:start] + fmt.Sprintf("%d", r) + template[start+end+1:]
+	}
+
+	// {shortuuid}
+	template = strings.ReplaceAll(template, "{shortuuid}", fmt.Sprintf("%08x", rand.Uint32()))
+
+	return template
+}
+
 // generateManifest 扫描 overrides/ 目录并生成 server-manifest.json
 func generateManifest() error {
 	mf := manifestFilePath()
@@ -106,7 +159,7 @@ func generateManifest() error {
 	manifest := Manifest{
 		Name:        env.GetConfig("MANIFEST_NAME"),
 		Author:      env.GetConfig("MANIFEST_AUTHOR"),
-		Version:     env.GetConfig("MANIFEST_VERSION"),
+		Version:     resolveVersion(env.GetConfig("MANIFEST_VERSION")),
 		Description: unescapeNewlines(env.GetConfig("MANIFEST_DESCRIPTION")),
 		FileAPI:     env.GetConfig("MANIFEST_FILE_API"),
 	}
