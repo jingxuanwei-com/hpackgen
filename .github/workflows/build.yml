@@ -1,0 +1,214 @@
+name: Build
+
+on:
+  push:
+    branches: ["*"]
+    paths-ignore:
+      - ".github/**"
+      - "**.md"
+  release:
+    types: [published, created, edited]
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: "自定义版本号标签（留空自动从 git tag 获取）"
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    name: Go ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            artifact_suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact_suffix: linux-arm64
+          - goos: windows
+            goarch: amd64
+            artifact_suffix: win-amd64.exe
+          - goos: windows
+            goarch: arm64
+            artifact_suffix: win-arm64.exe
+          - goos: darwin
+            goarch: amd64
+            artifact_suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            artifact_suffix: darwin-arm64
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache: true
+          cache-dependency-path: 1szt/go.sum
+
+      - name: 下载依赖
+        working-directory: ./1szt
+        run: go mod download
+
+      - name: 构建二进制
+        working-directory: ./1szt
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -trimpath -ldflags="-s -w" -o "hpackgen-${{ matrix.artifact_suffix }}" ./main
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: hpackgen-${{ matrix.artifact_suffix }}
+          path: ./1szt/hpackgen-${{ matrix.artifact_suffix }}
+          if-no-files-found: error
+
+  release:
+    name: 发布 Release
+    needs: [build]
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-artifacts
+          pattern: hpackgen-*
+          merge-multiple: true
+
+      - name: 生成校验和
+        working-directory: ./release-artifacts
+        run: |
+          sha256sum hpackgen-* > checksums.txt
+          cat checksums.txt
+
+      - name: 确定版本号
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version_override }}" ]; then
+            echo "tag=${{ github.event.inputs.version_override }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$(date +'%Y%m%d%H%M%S')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 创建 Release（手动触发）
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "hpackgen ${{ steps.version.outputs.tag }}"
+          body: |
+            ## hpackgen ${{ steps.version.outputs.tag }}
+
+            支持平台：
+            - Linux (amd64 / arm64)
+            - Windows (amd64 / arm64)
+            - macOS (amd64 / arm64)
+          draft: false
+          prerelease: false
+          files: |
+            ./release-artifacts/hpackgen-*
+            ./release-artifacts/checksums.txt
+
+      - name: 上传 Release 资产（已发布 Release）
+        if: github.event_name == 'release'
+        run: |
+          for file in ./release-artifacts/hpackgen-* ./release-artifacts/checksums.txt; do
+            gh release upload "${{ github.event.release.tag_name }}" "$file" --repo "${{ github.repository }}" --clobber
+          done
+        env:
+          GH_TOKEN: ${{ github.GITHUB_TOKEN }}
+
+  docker:
+    name: "容器 ${{ matrix.variant }} (linux/amd64 + linux/arm64)"
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [debian, alpine]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置 QEMU（多架构模拟）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GitHub 容器仓库
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 确定版本号
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version_override }}" ]; then
+            echo "tag=${{ github.event.inputs.version_override }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 生成容器镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=-${{ matrix.variant }},onlatest=true
+          tags: |
+            type=raw,value=${{ steps.version.outputs.tag }}
+            type=raw,value=latest,enable=${{ github.ref_name == github.event.repository.default_branch || github.event_name == 'release' }}
+            type=sha,format=short
+
+      - name: 构建并推送容器镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: ${{ matrix.variant }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          cache-from: type=gha,scope=hpackgen-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=hpackgen-${{ matrix.variant }}
