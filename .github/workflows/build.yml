@@ -194,7 +194,7 @@ jobs:
           elif [ "${{ github.ref_type }}" = "tag" ]; then
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "tag=$(date +'%Y%m%d%H%M%S')" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 生成容器镜像标签
@@ -206,35 +206,36 @@ jobs:
           REG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           TYPE="${{ github.event.inputs.release_type }}"
           SHA="${{ github.sha }}"
+          VER="${{ steps.version.outputs.tag }}"
 
           if [ "${{ github.event_name }}" = "push" ]; then
-            # ── 自动构建 → test 标签 ──
+            # ── 自动构建 → test 标签 + 哈希 ──
             TAGS="${REG}:test${SUFFIX}"
             TAGS="${TAGS},${REG}:${SHA:0:7}${SUFFIX}"
 
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$TYPE" = "test" ]; then
-            # ── 手动·测试 → 只推送 test 镜像，不发布 ──
+            # ── 手动·测试 → test 标签 + 哈希 ──
             TAGS="${REG}:test${SUFFIX}"
             TAGS="${TAGS},${REG}:${SHA:0:7}${SUFFIX}"
 
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$TYPE" = "prerelease" ]; then
-            # ── 手动·预发布 → 预发布标签 ──
+            # ── 手动·预发布 → 预发布标签 + 版本号 ──
             TAGS="${REG}:prerelease${SUFFIX}"
-            TAGS="${TAGS},${REG}:${{ steps.version.outputs.tag }}${SUFFIX}"
+            TAGS="${TAGS},${REG}:${VER}${SUFFIX}"
             TAGS="${TAGS},${REG}:${SHA:0:7}${SUFFIX}"
             if [ "${{ matrix.variant }}" = "alpine" ]; then
               TAGS="${TAGS},${REG}:prerelease"
-              TAGS="${TAGS},${REG}:${{ steps.version.outputs.tag }}"
+              TAGS="${TAGS},${REG}:${VER}"
             fi
 
           else
             # ── 发布 / Release 事件 → 正式版本标签 ──
             TAGS="${REG}:latest${SUFFIX}"
-            TAGS="${TAGS},${REG}:${{ steps.version.outputs.tag }}${SUFFIX}"
+            TAGS="${TAGS},${REG}:${VER}${SUFFIX}"
             TAGS="${TAGS},${REG}:${SHA:0:7}${SUFFIX}"
             if [ "${{ matrix.variant }}" = "alpine" ]; then
               TAGS="${TAGS},${REG}:latest"
-              TAGS="${TAGS},${REG}:${{ steps.version.outputs.tag }}"
+              TAGS="${TAGS},${REG}:${VER}"
             fi
           fi
 
